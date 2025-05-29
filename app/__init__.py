@@ -1,26 +1,28 @@
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
-from config.config import config
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-db = SQLAlchemy()
-migrate = Migrate()
+# Create FastAPI app
+app = FastAPI(title="Trackly API")
 
-def create_app(config_name='default'):
-    app = Flask(__name__)
-    app.config.from_object(config[config_name])
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    # Initialize extensions
-    db.init_app(app)
-    migrate.init_app(app, db)
+# Import and include routers
+from app.api.search import router as search_router
+app.include_router(search_router, prefix="/api")
 
-    # Register blueprints
-    from app.api.search import search_bp
-    app.register_blueprint(search_bp, url_prefix='/api')
-
-    #todo: remove for production
-    @app.route('/')
-    def root():
-        return 'server running...'
-
-    return app
+@app.get("/")
+async def root():
+    return {
+        "name": "Trackly API",
+        "version": "1.0.0",
+        "status": "running",
+        "description": "API for tracking and search functionality",
+        "documentation": "/docs",
+    }

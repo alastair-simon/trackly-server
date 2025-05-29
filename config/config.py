@@ -1,10 +1,11 @@
 import os
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
-    # Use local database by default, can be overridden by DATABASE_URL environment variable
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'postgresql://localhost/mix_search_db')
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SECRET_KEY = os.environ.get('SECRET_KEY')
+    if not SECRET_KEY:
+        raise ValueError("SECRET_KEY environment variable must be set")
+    REDIS_HOST = os.environ.get('REDIS_HOST')
+    REDIS_PORT = int(os.environ.get('REDIS_PORT', '6379'))
 
 class DevelopmentConfig(Config):
     DEBUG = True
@@ -17,3 +18,9 @@ config = {
     'production': ProductionConfig,
     'default': DevelopmentConfig
 }
+
+def get_settings():
+    """Get settings instance based on environment"""
+    env = os.environ.get('FLASK_ENV', 'development')
+    config_class = config.get(env, config['default'])
+    return config_class()
