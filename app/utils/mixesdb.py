@@ -14,15 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 COMMON_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 ]
 
 
-def _human_like_delay(min_delay=1000, max_delay=3000):
+def _human_like_delay(min_delay=2000, max_delay=5000):
     """Add a random delay to mimic human behavior."""
     delay = random.uniform(min_delay, max_delay) / 1000
     time.sleep(delay)
@@ -31,7 +31,7 @@ def _human_like_delay(min_delay=1000, max_delay=3000):
 class StealthSession:
     """HTTP session with stealth features to avoid being blocked."""
 
-    def __init__(self, min_delay=1000, max_delay=3000, retry_delay=(5000, 10000)):
+    def __init__(self, min_delay=2000, max_delay=5000, retry_delay=(10000, 15000)):
         self.session = requests.Session()
         self.min_delay = min_delay
         self.max_delay = max_delay
@@ -40,19 +40,22 @@ class StealthSession:
 
     def _setup_session(self):
         """Configure session with stealth headers."""
+        user_agent = random.choice(COMMON_USER_AGENTS)
         self.session.headers.update({
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
-            'Cache-Control': 'max-age=0'
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://www.google.com/'
         })
-        self.session.headers['User-Agent'] = random.choice(COMMON_USER_AGENTS)
 
     def _make_request(self, method, url, **kwargs):
         """Common request handling with retries and delays."""
@@ -63,8 +66,19 @@ class StealthSession:
                 response = getattr(self.session, method)(url, timeout=30, **kwargs)
                 response.raise_for_status()
                 return response
-            except requests.exceptions.RequestException:
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 403:
+                    logger.warning(f"403 Forbidden for {url} - MixesDB may be blocking requests. Attempt {attempt + 1}/{max_retries}")
+                    if attempt < max_retries - 1:
+                        _human_like_delay(*self.retry_delay)
+                        self._setup_session()  # Refresh headers and user agent
+                    else:
+                        raise
+                else:
+                    raise
+            except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
+                    logger.warning(f"Request failed for {url}: {str(e)}. Retrying...")
                     _human_like_delay(*self.retry_delay)
                     self._setup_session()
                 else:
