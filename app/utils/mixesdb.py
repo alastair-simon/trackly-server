@@ -64,24 +64,25 @@ def _get_proxies(proxy_list=None):
             if proxy_username and proxy_password:
                 # Oxylabs requires specific format: user-USERNAME-country-COUNTRY:PASSWORD@host:port
                 # Format: https://user-USERNAME-country-COUNTRY:PASSWORD@dc.oxylabs.io:PORT
+                # Note: Password should NOT be URL-encoded per Oxylabs documentation
                 formatted_username = f"user-{proxy_username}-country-{proxy_country}"
-                # URL encode password to handle special characters
-                encoded_password = quote(proxy_password, safe='')
 
+                # Extract host:port from proxy (remove any existing protocol)
                 if '://' in selected_proxy:
-                    # Proxy already has protocol, insert auth
-                    protocol, rest = selected_proxy.split('://', 1)
-                    authenticated_proxy = f"{protocol}://{formatted_username}:{encoded_password}@{rest}"
+                    _, proxy_host_port = selected_proxy.split('://', 1)
                 else:
-                    # No protocol, use https for Oxylabs
-                    authenticated_proxy = f"https://{formatted_username}:{encoded_password}@{selected_proxy}"
+                    proxy_host_port = selected_proxy
+
+                # Use https:// protocol as shown in Oxylabs example
+                authenticated_proxy = f"https://{formatted_username}:{proxy_password}@{proxy_host_port}"
                 selected_proxy = authenticated_proxy
                 # Log without showing credentials
-                proxy_host = selected_proxy.split('@')[-1] if '@' in selected_proxy else selected_proxy
-                logger.info(f"Using authenticated Oxylabs proxy: {proxy_host}")
+                logger.info(f"Using authenticated Oxylabs proxy: {proxy_host_port}")
             else:
                 logger.info(f"Using proxy from list: {selected_proxy}")
 
+            # Oxylabs example shows only setting 'https' in proxies dict
+            # Use https for both http and https requests
             proxies = {
                 'http': selected_proxy,
                 'https': selected_proxy
