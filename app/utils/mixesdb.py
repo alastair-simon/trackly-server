@@ -9,9 +9,6 @@ import time
 import os
 from urllib.parse import urljoin, quote
 from typing import List, Dict, Optional
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 COMMON_USER_AGENTS = [
@@ -73,7 +70,6 @@ def _get_proxies(proxy_list=None):
             # Oxylabs customer ID should not include @ symbol
             if proxy_username and '@' in proxy_username:
                 proxy_username = proxy_username.split('@')[0]
-                logger.warning(f"Extracted customer ID '{proxy_username}' from email address. Use just the customer ID in PROXY_USERNAME.")
 
             if proxy_username and proxy_password:
                 # Oxylabs requires specific format: user-USERNAME-country-COUNTRY:PASSWORD@host:port
@@ -92,10 +88,6 @@ def _get_proxies(proxy_list=None):
                 # Use https:// protocol as shown in Oxylabs example
                 authenticated_proxy = f"https://{formatted_username}:{encoded_password}@{proxy_host_port}"
                 selected_proxy = authenticated_proxy
-                # Log without showing credentials
-                logger.info(f"Using authenticated Oxylabs proxy: {proxy_host_port}")
-            else:
-                logger.info(f"Using proxy from list: {selected_proxy}")
 
             # Oxylabs example shows only setting 'https' in proxies dict
             # Use https for both http and https requests
@@ -118,7 +110,6 @@ class StealthSession:
         self.proxy_list = _get_proxy_list()
         self.proxies = _get_proxies(self.proxy_list)
         if self.proxies:
-            logger.info(f"Proxy configuration enabled: {self.proxies}")
         self._setup_session()
 
     def _setup_session(self):
@@ -159,14 +150,12 @@ class StealthSession:
                 return response
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 403:
-                    logger.warning(f"403 Forbidden for {url} - MixesDB may be blocking requests. Attempt {attempt + 1}/{max_retries}")
                     if attempt < max_retries - 1:
                         _human_like_delay(*self.retry_delay)
                         self._setup_session()  # Refresh headers and user agent
                         # Try rotating proxy if using proxy list
                         if self.proxy_list:
                             self.proxies = _get_proxies(self.proxy_list)
-                            logger.info(f"Rotating proxy for retry: {self.proxies}")
                     else:
                         raise
                 else:
@@ -175,22 +164,18 @@ class StealthSession:
                 error_str = str(e)
                 # 407 Unauthorized means authentication failed - don't retry, just fail fast
                 if '407' in error_str or 'Unauthorized' in error_str:
-                    logger.error(f"Proxy authentication failed (407 Unauthorized) for {url}. Check PROXY_USERNAME and PROXY_PASSWORD environment variables.")
                     raise  # Don't retry authentication failures
 
-                logger.warning(f"Proxy error for {url}: {error_str}. Attempt {attempt + 1}/{max_retries}")
                 if attempt < max_retries - 1:
                     _human_like_delay(*self.retry_delay)
                     # Try rotating proxy if using proxy list
                     if self.proxy_list:
                         self.proxies = _get_proxies(self.proxy_list)
-                        logger.info(f"Rotating proxy after error: {self.proxies}")
                     self._setup_session()
                 else:
                     raise
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Request failed for {url}: {str(e)}. Retrying...")
                     _human_like_delay(*self.retry_delay)
                     # Try rotating proxy if using proxy list
                     if self.proxy_list:
@@ -212,7 +197,6 @@ class StealthSession:
 def _decompress_response(response):
     """Handle response decompression for various compression types."""
     content_encoding = response.headers.get('Content-Encoding', '').lower()
-    logger.debug(f"Response encoding: {response.encoding}, Content-Encoding: {content_encoding}")
 
     if content_encoding in ['gzip', 'deflate']:
         # requests handles these automatically
@@ -221,7 +205,6 @@ def _decompress_response(response):
         return response.text
     elif content_encoding == 'zstd':
         # Server sent zstd - need to decompress manually
-        logger.warning(f"Server sent zstd compression. Attempting to decompress manually.")
         html_content = None
 
         # Try multiple methods to decompress zstd
@@ -229,7 +212,6 @@ def _decompress_response(response):
         try:
             import zstd
             html_content = zstd.decompress(response.content).decode('utf-8')
-            logger.info(f"Successfully decompressed zstd content using zstd library")
             return html_content
         except ImportError:
             # Method 2: Try zstandard library
@@ -237,7 +219,6 @@ def _decompress_response(response):
                 import zstandard as zstd_alt
                 dctx = zstd_alt.ZstdDecompressor()
                 html_content = dctx.decompress(response.content).decode('utf-8')
-                logger.info(f"Successfully decompressed zstd content using zstandard library")
                 return html_content
             except ImportError:
                 # Method 3: Try system zstd command (if available)
@@ -251,16 +232,13 @@ def _decompress_response(response):
                         timeout=10
                     )
                     html_content = result.stdout.decode('utf-8')
-                    logger.info(f"Successfully decompressed zstd content using system zstd command")
                     return html_content
                 except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                    logger.error("Cannot decompress zstd: no zstd library or system command available")
                     # Last resort: try response.text (will likely fail and return binary)
                     if response.encoding is None:
                         response.encoding = response.apparent_encoding or 'utf-8'
                     return response.text
-        except Exception as e:
-            logger.error(f"Failed to decompress zstd: {e}")
+        except Exception:
             # Last resort: try response.text (will likely fail and return binary)
             if response.encoding is None:
                 response.encoding = response.apparent_encoding or 'utf-8'
@@ -311,14 +289,11 @@ def search(query: str) -> List[Dict[str, str]]:
                 search_input = elements[0]
                 search_form = search_input.find_parent('form')
                 if search_form:
-                    logger.debug(f"Found search form using selector: {selector}")
                     break
 
         if not search_form or not search_input:
             # Try direct search URL construction
-            logger.warning("Search form not found, trying MediaWiki search format")
             search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
-            logger.info(f"Using MediaWiki search: {search_url}")
             response = session.get(search_url)
             html_content = _decompress_response(response)
         else:
@@ -337,14 +312,11 @@ def search(query: str) -> List[Dict[str, str]]:
 
             # If form action is empty or invalid, use MediaWiki search format
             if not form_action or form_action == '/':
-                logger.warning(f"Form action is empty or invalid, using MediaWiki search format")
                 search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
-                logger.info(f"Using MediaWiki search: {search_url}")
                 response = session.get(search_url)
                 html_content = _decompress_response(response)
             else:
                 search_url = urljoin(base_url, form_action) if form_action else base_url
-                logger.debug(f"Using form action: {search_url} with method: {form_method}")
 
                 if form_method == 'post':
                     response = session.post(search_url, data=form_data)
@@ -379,13 +351,7 @@ def search(query: str) -> List[Dict[str, str]]:
                             'url': full_url
                         })
 
-        # Log all results for debugging/inspection
-        logger.info("MixesDB search for '%s' returned %d results:", query, len(results))
-        for idx, item in enumerate(results, start=1):
-            logger.info("  #%d: %s -> %s", idx, item.get("title", ""), item.get("url", ""))
-
         return results
 
-    except Exception as e:
-        logger.error("MixesDB search for '%s' failed: %s", query, str(e))
+    except Exception:
         return []

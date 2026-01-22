@@ -8,9 +8,6 @@ results and return the best match.
 import re
 from typing import List, Dict, Optional
 from rapidfuzz import fuzz, process
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 def normalize_text(text: str) -> str:
@@ -173,11 +170,9 @@ def find_best_match(query: str, results: List[Dict[str, str]], min_score: float 
         '2014-05-23 -LeonVynehall, Francis Inferno Orchestra - Solid Steel'
     """
     if not results:
-        logger.warning(f"No results provided for query: '{query}'")
         return None
 
     if not query or not query.strip():
-        logger.warning("Empty query provided")
         return None
 
     # Calculate scores for all results
@@ -194,26 +189,14 @@ def find_best_match(query: str, results: List[Dict[str, str]], min_score: float 
         })
 
     if not scored_results:
-        logger.warning(f"No valid results with titles found for query: '{query}'")
         return None
 
     # Sort by score (descending) and get the best match
     scored_results.sort(key=lambda x: x['match_score'], reverse=True)
     best_match = scored_results[0]
 
-    # Log the top matches for debugging
-    logger.info(f"Best match for '{query}': '{best_match['title']}' (score: {best_match['match_score']:.2f})")
-    if len(scored_results) > 1:
-        logger.debug(f"Top 3 matches:")
-        for i, result in enumerate(scored_results[:3], 1):
-            logger.debug(f"  {i}. '{result['title']}' (score: {result['match_score']:.2f})")
-
     # Check if score meets minimum threshold
     if best_match['match_score'] < min_score:
-        logger.info(
-            f"Best match score ({best_match['match_score']:.2f}) below threshold ({min_score}) "
-            f"for query: '{query}'"
-        )
         return None
 
     return best_match
@@ -235,11 +218,9 @@ def find_best_matches(query: str, results: List[Dict[str, str]], top_n: int = 5,
         Results are sorted by score (descending).
     """
     if not results:
-        logger.warning(f"No results provided for query: '{query}'")
         return []
 
     if not query or not query.strip():
-        logger.warning("Empty query provided")
         return []
 
     # Calculate scores for all results

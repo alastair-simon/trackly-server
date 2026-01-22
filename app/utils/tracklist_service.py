@@ -15,17 +15,12 @@ from typing import Dict, Any
 import redis
 import os
 from datetime import timedelta
-import logging
 
 from .tracklist_parser import extract_tracks_simple
 from .tracklist_html import get_html_from_results
 from .mixesdb import search
 from .query_utils import extract_query_without_by
 from .result_matcher import find_best_match
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Cache TTL in seconds (24 hours)
 CACHE_TTL = 24 * 60 * 60
@@ -43,7 +38,6 @@ try:
             socket_timeout=10,  # 10 second timeout for operations
             socket_connect_timeout=10  # 10 second timeout for connections
         )
-        logger.info(f"Using REDIS_URL connection string")
     else:
         # Fall back to REDIS_HOST and REDIS_PORT
         redis_host = os.getenv('REDIS_HOST')
@@ -57,20 +51,13 @@ try:
                 socket_timeout=10,  # 10 second timeout for operations
                 socket_connect_timeout=10  # 10 second timeout for connections
             )
-            logger.info(f"Using REDIS_HOST: {redis_host}:{redis_port}")
 
     if redis_client:
         # Test connection
         redis_client.ping()
-        logger.info("Successfully connected to Redis cache")
-    else:
-        logger.info("No Redis configuration found. Caching will be disabled.")
-
-except (redis.ConnectionError, redis.TimeoutError) as e:
-    logger.warning(f"Could not connect to Redis cache: {str(e)}. Caching will be disabled.")
+except (redis.ConnectionError, redis.TimeoutError):
     redis_client = None
-except Exception as e:
-    logger.warning(f"Unexpected error connecting to Redis: {str(e)}. Caching will be disabled.")
+except Exception:
     redis_client = None
 
 
@@ -80,16 +67,13 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
         try:
             cache_key = f"tracklist:{query}"
             cached_result = redis_client.get(cache_key)
-
             if cached_result:
                 try:
                     return json.loads(cached_result)
                 except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON in cache for query: {query}")
-        except (redis.ConnectionError, redis.TimeoutError) as e:
-            logger.warning(f"Cache error (non-blocking): {str(e)}")
-        except Exception as e:
-            logger.warning(f"Unexpected cache error (non-blocking): {str(e)}")
+                    pass
+        except Exception:
+            pass
 
     try:
         # Search for tracklists
@@ -102,25 +86,26 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
                 results = search(fallback_query)
 
         if not results:
-            logger.warning(f"No tracks found for query: {query}")
+            print("Query result not found")
             return {"success": True, "tracks": []}
 
+        print("Query result found")
+
         # Find the best matching result using fuzzy matching
-        logger.info(f"Finding best match from {len(results)} results for query: '{query}'")
         best_match = find_best_match(query, results, min_score=50.0)
         if not best_match:
-            logger.warning(f"No suitable match found for query: '{query}' (all results below minimum score threshold)")
+            print("Query result not found")
             return {"success": True, "results": []}
-        logger.info(f"Selected best match: '{best_match['title']}' (score: {best_match.get('match_score', 0):.2f})")
 
         # Get HTML content from the best matching result only
         html_entries = get_html_from_results([best_match])
 
         if not html_entries:
-            logger.warning(f"No HTML content entries retrieved for query: {query}")
+            print("Query result not found")
             return {"success": True, "results": []}
 
         # Parse tracks from each HTML entry
+        print("Extracting tracks...")
         parsed_results = []
         for entry in html_entries:
             title = entry.get("title", "")
@@ -129,7 +114,6 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
             match_score = best_match.get("match_score")
 
             if not html:
-                # Include entry even without HTML
                 parsed_results.append({
                     "title": title,
                     "url": url,
@@ -152,14 +136,15 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
                     "tracks": tracks,
                     "match_score": match_score
                 })
-            except Exception as e:
-                logger.error(f"Could not extract tracks from '{title}': {str(e)}")
+            except Exception:
                 parsed_results.append({
                     "title": title,
                     "url": url,
                     "tracks": [],
                     "match_score": match_score
                 })
+
+        print("Successfully extracted tracks")
 
         result = {
             "success": True,
@@ -175,10 +160,8 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
                     CACHE_TTL,
                     json.dumps(result)
                 )
-            except (redis.ConnectionError, redis.TimeoutError) as e:
-                logger.warning(f"Failed to cache result (non-blocking): {str(e)}")
-            except Exception as e:
-                logger.warning(f"Unexpected error caching result (non-blocking): {str(e)}")
+            except Exception:
+                pass
 
         return result
 

@@ -2,10 +2,7 @@
 Utility functions for working with search queries.
 """
 
-import logging
 import re
-
-logger = logging.getLogger(__name__)
 
 
 def extract_query_without_by(query: str) -> str:
@@ -29,11 +26,6 @@ def extract_query_without_by(query: str) -> str:
     if match:
         # Remove everything from "by" onwards
         cleaned_query = query[: match.start()].strip()
-        logger.info(
-            "Extracted query without 'by' clause: '%s' from '%s'",
-            cleaned_query,
-            query,
-        )
         return cleaned_query
 
     return query

@@ -2,11 +2,8 @@
 Pure function to fetch HTML content from MixesDB search results.
 """
 
-import logging
 from typing import List, Dict, Optional
 from .mixesdb import StealthSession
-
-logger = logging.getLogger(__name__)
 
 
 def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optional[str]]]:
@@ -27,7 +24,6 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
     if not results:
         return []
 
-    logger.info(f"Fetching HTML for {len(results)} results")
     session = StealthSession()
     html_results: List[Dict[str, Optional[str]]] = []
 
@@ -36,7 +32,6 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
         url = result.get("url")
 
         if not url:
-            logger.warning(f"Result {idx}/{len(results)} ({title}) has no URL")
             html_results.append(
                 {
                     "title": title,
@@ -47,7 +42,6 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
             continue
 
         try:
-            logger.info(f"Fetching HTML {idx}/{len(results)}: {title} - {url}")
             response = session.get(url)
 
             # Handle compression - requests auto-decompresses gzip/deflate
@@ -61,7 +55,6 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
                 html_content = response.text
             elif content_encoding == 'zstd':
                 # Server sent zstd - need to decompress manually
-                logger.warning(f"Server sent zstd compression. Attempting to decompress manually.")
                 html_content = None
 
                 # Try multiple methods to decompress zstd
@@ -69,14 +62,12 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
                 try:
                     import zstd
                     html_content = zstd.decompress(response.content).decode('utf-8')
-                    logger.debug(f"Successfully decompressed zstd content using zstd library")
                 except ImportError:
                     # Method 2: Try zstandard library
                     try:
                         import zstandard as zstd_alt
                         dctx = zstd_alt.ZstdDecompressor()
                         html_content = dctx.decompress(response.content).decode('utf-8')
-                        logger.debug(f"Successfully decompressed zstd content using zstandard library")
                     except ImportError:
                         # Method 3: Try system zstd command (if available)
                         import subprocess
@@ -89,14 +80,11 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
                                 timeout=10
                             )
                             html_content = result.stdout.decode('utf-8')
-                            logger.debug(f"Successfully decompressed zstd content using system zstd command")
                         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                            logger.error("Cannot decompress zstd: no zstd library or system command available")
                             if response.encoding is None:
                                 response.encoding = response.apparent_encoding or 'utf-8'
                             html_content = response.text
-                except Exception as e:
-                    logger.error(f"Failed to decompress zstd: {e}")
+                except Exception:
                     if response.encoding is None:
                         response.encoding = response.apparent_encoding or 'utf-8'
                     html_content = response.text
@@ -122,9 +110,7 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
                     "html": html_content,
                 }
             )
-            logger.info(f"Successfully fetched HTML {idx}/{len(results)}: {len(html_content)} chars")
-        except Exception as e:
-            logger.error(f"Failed to fetch HTML {idx}/{len(results)} ({title}): {str(e)}")
+        except Exception:
             html_results.append(
                 {
                     "title": title,
@@ -133,5 +119,4 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
                 }
             )
 
-    logger.info(f"Completed fetching HTML: {len([r for r in html_results if r.get('html')])} successful out of {len(html_results)}")
     return html_results

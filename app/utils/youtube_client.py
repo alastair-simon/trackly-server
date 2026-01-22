@@ -1,11 +1,7 @@
 import os
 import aiohttp
-import logging
 from typing import Optional, Dict, Any, Tuple
 import asyncio
-
-# Configure logging
-logger = logging.getLogger(__name__)
 
 class YouTubeAPI:
     def __init__(self):
@@ -24,7 +20,6 @@ class YouTubeAPI:
             Dictionary with 'link' and 'thumbnail' keys if found, None otherwise
         """
         if not self.api_key:
-            logger.warning("YouTube API key not configured")
             return None
 
         # Combine artist and track for search query
@@ -63,14 +58,11 @@ class YouTubeAPI:
                             video_url = f"https://www.youtube.com/watch?v={video_id}"
                             return {'link': video_url, 'thumbnail': thumbnail_url}
                         else:
-                            logger.info(f"No YouTube results found for: {search_query}")
                             return None
                     else:
-                        logger.error(f"YouTube API error: {response.status}")
                         return None
 
-        except Exception as e:
-            logger.error(f"Error searching YouTube for '{search_query}': {str(e)}")
+        except Exception:
             return None
 
     async def search_tracks_batch(self, tracks: list) -> list:
@@ -84,7 +76,6 @@ class YouTubeAPI:
             List of track dictionaries with added 'link' and 'thumbnail' keys
         """
         if not self.api_key:
-            logger.warning("YouTube API key not configured, skipping YouTube search")
             # Add empty link and thumbnail fields to all tracks when API key is not configured
             for track in tracks:
                 track['link'] = ""
@@ -102,11 +93,9 @@ class YouTubeAPI:
                 if youtube_result:
                     track['link'] = youtube_result['link']
                     track['thumbnail'] = youtube_result['thumbnail']
-                    logger.info(f"Found YouTube link and thumbnail for {track['artist']} - {track['track']}")
                 else:
                     track['link'] = ""
                     track['thumbnail'] = ""
-                    logger.info(f"No YouTube link found for {track['artist']} - {track['track']}")
 
             results.append(track)
 
