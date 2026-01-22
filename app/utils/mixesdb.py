@@ -15,11 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 COMMON_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+    # Older browsers that typically don't support zstd - may get gzip instead
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    # Even older browsers
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0",
+    # Mobile user agents (often get different compression)
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 ]
 
 
@@ -120,7 +128,9 @@ class StealthSession:
             'User-Agent': user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            # Only request gzip/deflate (not zstd/br) since requests auto-decompresses these
+            # zstd requires additional library that has build issues on Python 3.13
+            'Accept-Encoding': 'gzip, deflate',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
@@ -235,31 +245,62 @@ def search(query: str) -> List[Dict[str, str]]:
         # This allows us to see what's on the page without parsing
         logger.info(f"Returning full page HTML (parsing disabled): {search_url}")
 
-        # Handle compression - requests auto-decompresses gzip/deflate, but not zstd/br
+        # Handle compression - requests auto-decompresses gzip/deflate
+        # We removed zstd from Accept-Encoding header, so server should send gzip/deflate
         content_encoding = response.headers.get('Content-Encoding', '').lower()
         logger.info(f"Response encoding: {response.encoding}, Content-Encoding: {content_encoding}")
 
-        if content_encoding == 'zstd':
-            # requests doesn't support zstd, need to decompress manually
-            try:
-                import zstandard as zstd
-                dctx = zstd.ZstdDecompressor()
-                html_content = dctx.decompress(response.content).decode('utf-8')
-                logger.info(f"Manually decompressed zstd content")
-            except ImportError:
-                logger.warning("zstandard library not installed, cannot decompress zstd. Install with: pip install zstandard")
-                # Fallback: try to use response.text anyway (might fail)
-                response.encoding = response.apparent_encoding or 'utf-8'
-                html_content = response.text
-            except Exception as e:
-                logger.error(f"Failed to decompress zstd: {e}, trying fallback")
-                response.encoding = response.apparent_encoding or 'utf-8'
-                html_content = response.text
-        elif content_encoding in ['gzip', 'deflate']:
+        if content_encoding in ['gzip', 'deflate']:
             # requests handles these automatically
             if response.encoding is None:
                 response.encoding = response.apparent_encoding or 'utf-8'
             html_content = response.text
+        elif content_encoding == 'zstd':
+            # Server sent zstd - need to decompress manually
+            logger.warning(f"Server sent zstd compression. Attempting to decompress manually.")
+            html_content = None
+
+            # Try multiple methods to decompress zstd
+            # Method 1: Try zstd library
+            try:
+                import zstd
+                html_content = zstd.decompress(response.content).decode('utf-8')
+                logger.info(f"Successfully decompressed zstd content using zstd library")
+            except ImportError:
+                # Method 2: Try zstandard library
+                try:
+                    import zstandard as zstd_alt
+                    dctx = zstd_alt.ZstdDecompressor()
+                    html_content = dctx.decompress(response.content).decode('utf-8')
+                    logger.info(f"Successfully decompressed zstd content using zstandard library")
+                except ImportError:
+                    # Method 3: Try system zstd command (if available)
+                    import subprocess
+                    try:
+                        result = subprocess.run(
+                            ['zstd', '-d', '--stdout'],
+                            input=response.content,
+                            capture_output=True,
+                            check=True,
+                            timeout=10
+                        )
+                        html_content = result.stdout.decode('utf-8')
+                        logger.info(f"Successfully decompressed zstd content using system zstd command")
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                        logger.error("Cannot decompress zstd: no zstd library or system command available")
+                        # Last resort: try response.text (will likely fail and return binary)
+                        if response.encoding is None:
+                            response.encoding = response.apparent_encoding or 'utf-8'
+                        html_content = response.text
+            except Exception as e:
+                logger.error(f"Failed to decompress zstd: {e}")
+                # Last resort: try response.text (will likely fail and return binary)
+                if response.encoding is None:
+                    response.encoding = response.apparent_encoding or 'utf-8'
+                html_content = response.text
+
+            if html_content is None:
+                html_content = response.content.decode('utf-8', errors='ignore')
         else:
             # No compression or unknown - use response.text
             if response.encoding is None:

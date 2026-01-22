@@ -50,29 +50,59 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
             logger.info(f"Fetching HTML {idx}/{len(results)}: {title} - {url}")
             response = session.get(url)
 
-            # Handle compression - requests auto-decompresses gzip/deflate, but not zstd/br
+            # Handle compression - requests auto-decompresses gzip/deflate
+            # We removed zstd from Accept-Encoding header, so server should send gzip/deflate
             content_encoding = response.headers.get('Content-Encoding', '').lower()
 
-            if content_encoding == 'zstd':
-                # requests doesn't support zstd, need to decompress manually
-                try:
-                    import zstandard as zstd
-                    dctx = zstd.ZstdDecompressor()
-                    html_content = dctx.decompress(response.content).decode('utf-8')
-                    logger.debug(f"Manually decompressed zstd content")
-                except ImportError:
-                    logger.warning("zstandard library not installed, cannot decompress zstd")
-                    response.encoding = response.apparent_encoding or 'utf-8'
-                    html_content = response.text
-                except Exception as e:
-                    logger.error(f"Failed to decompress zstd: {e}, trying fallback")
-                    response.encoding = response.apparent_encoding or 'utf-8'
-                    html_content = response.text
-            elif content_encoding in ['gzip', 'deflate']:
+            if content_encoding in ['gzip', 'deflate']:
                 # requests handles these automatically
                 if response.encoding is None:
                     response.encoding = response.apparent_encoding or 'utf-8'
                 html_content = response.text
+            elif content_encoding == 'zstd':
+                # Server sent zstd - need to decompress manually
+                logger.warning(f"Server sent zstd compression. Attempting to decompress manually.")
+                html_content = None
+
+                # Try multiple methods to decompress zstd
+                # Method 1: Try zstd library
+                try:
+                    import zstd
+                    html_content = zstd.decompress(response.content).decode('utf-8')
+                    logger.debug(f"Successfully decompressed zstd content using zstd library")
+                except ImportError:
+                    # Method 2: Try zstandard library
+                    try:
+                        import zstandard as zstd_alt
+                        dctx = zstd_alt.ZstdDecompressor()
+                        html_content = dctx.decompress(response.content).decode('utf-8')
+                        logger.debug(f"Successfully decompressed zstd content using zstandard library")
+                    except ImportError:
+                        # Method 3: Try system zstd command (if available)
+                        import subprocess
+                        try:
+                            result = subprocess.run(
+                                ['zstd', '-d', '--stdout'],
+                                input=response.content,
+                                capture_output=True,
+                                check=True,
+                                timeout=10
+                            )
+                            html_content = result.stdout.decode('utf-8')
+                            logger.debug(f"Successfully decompressed zstd content using system zstd command")
+                        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                            logger.error("Cannot decompress zstd: no zstd library or system command available")
+                            if response.encoding is None:
+                                response.encoding = response.apparent_encoding or 'utf-8'
+                            html_content = response.text
+                except Exception as e:
+                    logger.error(f"Failed to decompress zstd: {e}")
+                    if response.encoding is None:
+                        response.encoding = response.apparent_encoding or 'utf-8'
+                    html_content = response.text
+
+                if html_content is None:
+                    html_content = response.content.decode('utf-8', errors='ignore')
             else:
                 # No compression or unknown - use response.text
                 if response.encoding is None:
