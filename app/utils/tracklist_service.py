@@ -115,11 +115,12 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
             match_score = None
 
             if not html:
-                # Skip entries without HTML
+                # Include entry even without HTML (for debugging)
                 parsed_results.append({
                     "title": title,
                     "url": url,
                     "tracks": [],
+                    "html": None,
                     "match_score": match_score
                 })
                 continue
@@ -136,6 +137,7 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
                     "title": title,
                     "url": url,
                     "tracks": tracks,
+                    "html": html,  # Include HTML in response
                     "match_score": match_score
                 })
             except Exception as e:
@@ -144,6 +146,7 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
                     "title": title,
                     "url": url,
                     "tracks": [],
+                    "html": html,  # Include HTML even if parsing failed
                     "match_score": match_score
                 })
 
