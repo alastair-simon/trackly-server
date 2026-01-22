@@ -231,52 +231,16 @@ def search(query: str) -> List[Dict[str, str]]:
             logger.info(f"Using MediaWiki search: {search_url}")
             response = session.get(search_url)
 
-        # Parse search results
-        soup = BeautifulSoup(response.content, 'html.parser')
-
-        # Debug: Log page structure to help diagnose parsing issues
-        logger.debug(f"Page title: {soup.title.string if soup.title else 'No title'}")
-        category_sections = soup.select('#mw-pages, #mw-subcategories, .mw-category-group')
-        logger.debug(f"Found {len(category_sections)} MediaWiki category sections")
-
-        # Look for result links - MediaWiki category pages have specific structure
-        result_selectors = [
-            '#mw-pages a',  # MediaWiki category page links
-            '#mw-subcategories a',  # MediaWiki subcategory links
-            '.mw-category-group a',  # MediaWiki category group links
-            '.mw-category a',  # MediaWiki category links
-            '#catMixesList a',  # MixesDB specific
-            '.linkPreviewWrapperList a',  # MixesDB specific
-            '.mw-search-results a',  # MediaWiki search results
-            'a[href*="/w/"]',  # Any MediaWiki page link
-            'a[href*="mix"]',  # Links containing "mix"
-            'a[href*="tracklist"]'  # Links containing "tracklist"
-        ]
-
-        seen_urls = set()
-        for selector in result_selectors:
-            links = soup.select(selector)
-            if links:
-                logger.debug(f"Found {len(links)} links using selector: {selector}")
-            for link in links:
-                href = link.get('href')
-                if href and href != '#' and not href.startswith('#'):
-                    # Skip category links and other non-tracklist links
-                    if '/Category:' in href or '/Special:' in href or '/File:' in href:
-                        continue
-                    full_url = urljoin(base_url, href)
-                    if full_url not in seen_urls:
-                        seen_urls.add(full_url)
-                        link_text = link.get_text(strip=True)
-                        if link_text:  # Only add if link has text
-                            results.append({
-                                'title': link_text,
-                                'url': full_url
-                            })
-        # Log all results for debugging/inspection
-        logger.info("MixesDB search for '%s' returned %d results:", query, len(results))
-        for idx, item in enumerate(results, start=1):
-            logger.info("  #%d: %s -> %s", idx, item.get("title", ""), item.get("url", ""))
+        # TEMPORARY: Return the full HTML page content
+        # This allows us to see what's on the page without parsing
+        logger.info(f"Returning full page HTML (parsing disabled): {search_url}")
+        html_content = response.text
+        logger.info(f"Page HTML length: {len(html_content)} characters")
+        results.append({
+            'title': f"Category: {category_name}",
+            'url': search_url,
+            'html': html_content
+        })
 
         return results
 
