@@ -234,8 +234,27 @@ def search(query: str) -> List[Dict[str, str]]:
         # TEMPORARY: Return the full HTML page content
         # This allows us to see what's on the page without parsing
         logger.info(f"Returning full page HTML (parsing disabled): {search_url}")
+        # Ensure proper encoding and decompression
+        # requests should auto-decompress gzip, but ensure encoding is set
+        if response.encoding is None:
+            response.encoding = response.apparent_encoding or 'utf-8'
+        # Get text content (requests handles gzip decompression automatically)
         html_content = response.text
+        # If content looks binary, try decoding manually
+        if html_content and not isinstance(html_content, str):
+            try:
+                html_content = html_content.decode('utf-8')
+            except (UnicodeDecodeError, AttributeError):
+                # If still binary, try to decompress manually
+                import gzip
+                try:
+                    html_content = gzip.decompress(response.content).decode('utf-8')
+                except:
+                    html_content = response.content.decode('utf-8', errors='ignore')
         logger.info(f"Page HTML length: {len(html_content)} characters")
+        logger.info(f"Response encoding: {response.encoding}, Content-Encoding: {response.headers.get('Content-Encoding', 'none')}")
+        # Log first 200 chars to verify it's text
+        logger.info(f"HTML preview (first 200 chars): {html_content[:200] if html_content else 'empty'}")
         results.append({
             'title': f"Category: {category_name}",
             'url': search_url,

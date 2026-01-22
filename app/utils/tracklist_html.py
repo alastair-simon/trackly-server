@@ -49,14 +49,30 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
         try:
             logger.info(f"Fetching HTML {idx}/{len(results)}: {title} - {url}")
             response = session.get(url)
+            # Ensure proper encoding and decompression
+            if response.encoding is None:
+                response.encoding = response.apparent_encoding or 'utf-8'
+            # Get text content (requests handles gzip decompression automatically)
+            html_content = response.text
+            # If content looks binary, try decoding manually
+            if html_content and not isinstance(html_content, str):
+                try:
+                    html_content = html_content.decode('utf-8')
+                except (UnicodeDecodeError, AttributeError):
+                    # If still binary, try to decompress manually
+                    import gzip
+                    try:
+                        html_content = gzip.decompress(response.content).decode('utf-8')
+                    except:
+                        html_content = response.content.decode('utf-8', errors='ignore')
             html_results.append(
                 {
                     "title": title,
                     "url": url,
-                    "html": response.text,
+                    "html": html_content,
                 }
             )
-            logger.info(f"Successfully fetched HTML {idx}/{len(results)}: {len(response.text)} chars")
+            logger.info(f"Successfully fetched HTML {idx}/{len(results)}: {len(html_content)} chars")
         except Exception as e:
             logger.error(f"Failed to fetch HTML {idx}/{len(results)} ({title}): {str(e)}")
             html_results.append(
