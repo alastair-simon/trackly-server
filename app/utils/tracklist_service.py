@@ -86,17 +86,13 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
             logger.warning(f"No tracks found for query: {query}")
             return {"success": True, "tracks": []}
 
-        # TEMPORARILY DISABLED: Find the best matching result using fuzzy matching
-        # logger.info(f"Finding best match from {len(results)} results for query: '{query}'")
-        # best_match = find_best_match(query, results, min_score=50.0)
-        # if not best_match:
-        #     logger.warning(f"No suitable match found for query: '{query}' (all results below minimum score threshold)")
-        #     return {"success": True, "results": []}
-        # logger.info(f"Selected best match: '{best_match['title']}' (score: {best_match.get('match_score', 0):.2f})")
-
-        # TEMPORARY: Just use the first result
-        best_match = results[0]
-        logger.info(f"Using first result (fuzzy matching disabled): '{best_match['title']}'")
+        # Find the best matching result using fuzzy matching
+        logger.info(f"Finding best match from {len(results)} results for query: '{query}'")
+        best_match = find_best_match(query, results, min_score=50.0)
+        if not best_match:
+            logger.warning(f"No suitable match found for query: '{query}' (all results below minimum score threshold)")
+            return {"success": True, "results": []}
+        logger.info(f"Selected best match: '{best_match['title']}' (score: {best_match.get('match_score', 0):.2f})")
 
         # Get HTML content from the best matching result only
         html_entries = get_html_from_results([best_match])
@@ -111,8 +107,7 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
             title = entry.get("title", "")
             url = entry.get("url", "")
             html = entry.get("html")
-            # match_score not available when using first result (fuzzy matching disabled)
-            match_score = None
+            match_score = best_match.get("match_score")
 
             if not html:
                 # Include entry even without HTML
