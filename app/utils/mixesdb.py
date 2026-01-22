@@ -59,24 +59,26 @@ def _get_proxies(proxy_list=None):
             # Add authentication if credentials are provided
             proxy_username = os.getenv('PROXY_USERNAME') or os.getenv('proxy_username')
             proxy_password = os.getenv('PROXY_PASSWORD') or os.getenv('proxy_password')
+            proxy_country = os.getenv('PROXY_COUNTRY', 'US')  # Default to US if not specified
 
             if proxy_username and proxy_password:
-                # Format: http://username:password@host:port
-                # URL encode username and password to handle special characters like @, :, etc.
-                encoded_username = quote(proxy_username, safe='')
+                # Oxylabs requires specific format: user-USERNAME-country-COUNTRY:PASSWORD@host:port
+                # Format: https://user-USERNAME-country-COUNTRY:PASSWORD@dc.oxylabs.io:PORT
+                formatted_username = f"user-{proxy_username}-country-{proxy_country}"
+                # URL encode password to handle special characters
                 encoded_password = quote(proxy_password, safe='')
 
                 if '://' in selected_proxy:
                     # Proxy already has protocol, insert auth
                     protocol, rest = selected_proxy.split('://', 1)
-                    authenticated_proxy = f"{protocol}://{encoded_username}:{encoded_password}@{rest}"
+                    authenticated_proxy = f"{protocol}://{formatted_username}:{encoded_password}@{rest}"
                 else:
-                    # No protocol, assume http
-                    authenticated_proxy = f"http://{encoded_username}:{encoded_password}@{selected_proxy}"
+                    # No protocol, use https for Oxylabs
+                    authenticated_proxy = f"https://{formatted_username}:{encoded_password}@{selected_proxy}"
                 selected_proxy = authenticated_proxy
                 # Log without showing credentials
                 proxy_host = selected_proxy.split('@')[-1] if '@' in selected_proxy else selected_proxy
-                logger.info(f"Using authenticated proxy: {proxy_host}")
+                logger.info(f"Using authenticated Oxylabs proxy: {proxy_host}")
             else:
                 logger.info(f"Using proxy from list: {selected_proxy}")
 
