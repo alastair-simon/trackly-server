@@ -141,7 +141,6 @@ async def search_by_path(path: str, request: Request):
                 title = result.get('title', '')
                 url = result.get('url', '')
                 tracks = result.get('tracks', [])
-                html = result.get('html')  # Get HTML from result
 
                 if tracks and isinstance(tracks, list):
                     logger.info(f"Processing '{title}': {len(tracks)} tracks")
@@ -150,15 +149,13 @@ async def search_by_path(path: str, request: Request):
                     final_results.append({
                         "title": title,
                         "url": url,
-                        "tracks": tracks_with_links,
-                        "html": html  # Include HTML in response
+                        "tracks": tracks_with_links
                     })
                 else:
                     final_results.append({
                         "title": title,
                         "url": url,
-                        "tracks": [],
-                        "html": html  # Include HTML in response
+                        "tracks": []
                     })
 
             logger.info(f"YouTube search completed: {total_tracks} total tracks across {len(final_results)} results")
