@@ -1,3 +1,13 @@
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Load environment variables from .env file if it exists
+# This ensures environment variables are loaded before any modules that need them
+project_root = Path(__file__).parent.parent
+env_path = project_root / '.env'
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

@@ -8,10 +8,14 @@ import redis
 
 class YouTubeAPI:
     def __init__(self):
-        self.api_key = os.getenv('YOUTUBE_API_KEY')
+        # Try YOUTUBE_API_KEY first, then fall back to YOUTUBE_API for backwards compatibility
+        self.api_key = os.getenv('YOUTUBE_API_KEY') or os.getenv('YOUTUBE_API')
         self.base_url = "https://www.googleapis.com/youtube/v3"
         self.session = None  # Reusable session for connection pooling
         self.semaphore = asyncio.Semaphore(10)  # Limit concurrent requests to 10
+
+        if not self.api_key:
+            print("WARNING: YOUTUBE_API_KEY or YOUTUBE_API environment variable is not set. YouTube search will be disabled.")
 
         # Initialize Redis client for caching YouTube results
         self.redis_client = None
@@ -136,8 +140,8 @@ class YouTubeAPI:
                                         self.cache_ttl,
                                         json.dumps(result)
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    print(f"WARNING: Failed to cache YouTube result: {e}")
 
                             return result
                         else:
@@ -150,13 +154,39 @@ class YouTubeAPI:
                                         self.cache_ttl,
                                         json.dumps({})  # Empty dict means not found
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    print(f"WARNING: Failed to cache 'not found' result: {e}")
                             return None
                     else:
+                        # Handle non-200 status codes
+                        error_data = await response.text()
+                        print(
+                            f"ERROR: YouTube API error for query '{search_query}': "
+                            f"Status {response.status}, Response: {error_data[:200]}"
+                        )
+
+                        # Print specific error types
+                        if response.status == 403:
+                            print("ERROR: YouTube API returned 403 Forbidden. Check API key permissions and quota.")
+                        elif response.status == 400:
+                            print("ERROR: YouTube API returned 400 Bad Request. Check API key and request parameters.")
+                        elif response.status == 429:
+                            print("ERROR: YouTube API returned 429 Too Many Requests. Rate limit exceeded.")
+                        elif response.status == 401:
+                            print("ERROR: YouTube API returned 401 Unauthorized. Invalid API key.")
+
                         return None
 
-            except Exception:
+            except aiohttp.ClientError as e:
+                print(f"ERROR: HTTP client error during YouTube search for '{search_query}': {e}")
+                return None
+            except asyncio.TimeoutError:
+                print(f"ERROR: Timeout error during YouTube search for '{search_query}'")
+                return None
+            except Exception as e:
+                print(f"ERROR: Unexpected error during YouTube search for '{search_query}': {e}")
+                import traceback
+                traceback.print_exc()
                 return None
 
     async def _process_single_track(self, track: dict) -> dict:
