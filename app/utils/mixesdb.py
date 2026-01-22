@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 import random
 import time
+import os
 from urllib.parse import urljoin
 from typing import List, Dict, Optional
 import logging
@@ -28,6 +29,59 @@ def _human_like_delay(min_delay=2000, max_delay=5000):
     time.sleep(delay)
 
 
+def _get_proxy_list():
+    """Get proxy list from environment variables."""
+    proxy_list_env = os.getenv('PROXY_LIST') or os.getenv('proxy_list')
+    if proxy_list_env:
+        return [p.strip() for p in proxy_list_env.split(',') if p.strip()]
+    return None
+
+
+def _get_proxies(proxy_list=None):
+    """Get proxy configuration from environment variables or proxy list."""
+    proxies = {}
+
+    # Check for single proxy
+    http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+    https_proxy = os.getenv('HTTPS_PROXY') or os.getenv('https_proxy')
+
+    if http_proxy:
+        proxies['http'] = http_proxy
+    if https_proxy:
+        proxies['https'] = https_proxy
+
+    # Use proxy list if provided and no single proxy is set
+    if proxy_list and not proxies:
+        if proxy_list:
+            # Use random proxy from list
+            selected_proxy = random.choice(proxy_list)
+
+            # Add authentication if credentials are provided
+            proxy_username = os.getenv('PROXY_USERNAME') or os.getenv('proxy_username')
+            proxy_password = os.getenv('PROXY_PASSWORD') or os.getenv('proxy_password')
+
+            if proxy_username and proxy_password:
+                # Format: http://username:password@host:port
+                if '://' in selected_proxy:
+                    # Proxy already has protocol, insert auth
+                    protocol, rest = selected_proxy.split('://', 1)
+                    authenticated_proxy = f"{protocol}://{proxy_username}:{proxy_password}@{rest}"
+                else:
+                    # No protocol, assume http
+                    authenticated_proxy = f"http://{proxy_username}:{proxy_password}@{selected_proxy}"
+                selected_proxy = authenticated_proxy
+                logger.info(f"Using authenticated proxy: {selected_proxy.split('@')[1] if '@' in selected_proxy else selected_proxy}")
+            else:
+                logger.info(f"Using proxy from list: {selected_proxy}")
+
+            proxies = {
+                'http': selected_proxy,
+                'https': selected_proxy
+            }
+
+    return proxies if proxies else None
+
+
 class StealthSession:
     """HTTP session with stealth features to avoid being blocked."""
 
@@ -36,6 +90,10 @@ class StealthSession:
         self.min_delay = min_delay
         self.max_delay = max_delay
         self.retry_delay = retry_delay
+        self.proxy_list = _get_proxy_list()
+        self.proxies = _get_proxies(self.proxy_list)
+        if self.proxies:
+            logger.info(f"Proxy configuration enabled: {self.proxies}")
         self._setup_session()
 
     def _setup_session(self):
@@ -63,7 +121,13 @@ class StealthSession:
         for attempt in range(max_retries):
             try:
                 _human_like_delay(self.min_delay, self.max_delay)
-                response = getattr(self.session, method)(url, timeout=30, **kwargs)
+
+                # Add proxies to request if configured
+                request_kwargs = kwargs.copy()
+                if self.proxies:
+                    request_kwargs['proxies'] = self.proxies
+
+                response = getattr(self.session, method)(url, timeout=30, **request_kwargs)
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as e:
@@ -72,14 +136,32 @@ class StealthSession:
                     if attempt < max_retries - 1:
                         _human_like_delay(*self.retry_delay)
                         self._setup_session()  # Refresh headers and user agent
+                        # Try rotating proxy if using proxy list
+                        if self.proxy_list:
+                            self.proxies = _get_proxies(self.proxy_list)
+                            logger.info(f"Rotating proxy for retry: {self.proxies}")
                     else:
                         raise
+                else:
+                    raise
+            except requests.exceptions.ProxyError as e:
+                logger.warning(f"Proxy error for {url}: {str(e)}. Attempt {attempt + 1}/{max_retries}")
+                if attempt < max_retries - 1:
+                    _human_like_delay(*self.retry_delay)
+                    # Try rotating proxy if using proxy list
+                    if self.proxy_list:
+                        self.proxies = _get_proxies(self.proxy_list)
+                        logger.info(f"Rotating proxy after error: {self.proxies}")
+                    self._setup_session()
                 else:
                     raise
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"Request failed for {url}: {str(e)}. Retrying...")
                     _human_like_delay(*self.retry_delay)
+                    # Try rotating proxy if using proxy list
+                    if self.proxy_list:
+                        self.proxies = _get_proxies(self.proxy_list)
                     self._setup_session()
                 else:
                     raise
