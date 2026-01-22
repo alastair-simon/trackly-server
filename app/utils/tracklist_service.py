@@ -33,20 +33,39 @@ CACHE_TTL = 24 * 60 * 60
 # Initialize Redis client with Render Key Value service
 redis_client = None
 try:
-    redis_host = os.getenv('REDIS_HOST')
-    redis_port = os.getenv('REDIS_PORT', '6379')
-
-    if redis_host:
-        redis_client = redis.Redis(
-            host=redis_host,
-            port=int(redis_port),
+    # Try REDIS_URL first (Render may provide this as a connection string)
+    redis_url = os.getenv('REDIS_URL')
+    if redis_url:
+        # Parse Redis URL (format: redis://[:password@]host[:port][/db])
+        redis_client = redis.from_url(
+            redis_url,
             decode_responses=True,
-            socket_timeout=5,  # 5 second timeout for operations
-            socket_connect_timeout=5  # 5 second timeout for connections
+            socket_timeout=10,  # 10 second timeout for operations
+            socket_connect_timeout=10  # 10 second timeout for connections
         )
+        logger.info(f"Using REDIS_URL connection string")
+    else:
+        # Fall back to REDIS_HOST and REDIS_PORT
+        redis_host = os.getenv('REDIS_HOST')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+
+        if redis_host:
+            redis_client = redis.Redis(
+                host=redis_host,
+                port=int(redis_port),
+                decode_responses=True,
+                socket_timeout=10,  # 10 second timeout for operations
+                socket_connect_timeout=10  # 10 second timeout for connections
+            )
+            logger.info(f"Using REDIS_HOST: {redis_host}:{redis_port}")
+
+    if redis_client:
         # Test connection
         redis_client.ping()
         logger.info("Successfully connected to Redis cache")
+    else:
+        logger.info("No Redis configuration found. Caching will be disabled.")
+
 except (redis.ConnectionError, redis.TimeoutError) as e:
     logger.warning(f"Could not connect to Redis cache: {str(e)}. Caching will be disabled.")
     redis_client = None
