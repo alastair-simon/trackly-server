@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import random
 import time
 import os
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 from typing import List, Dict, Optional
 import logging
 
@@ -62,15 +62,21 @@ def _get_proxies(proxy_list=None):
 
             if proxy_username and proxy_password:
                 # Format: http://username:password@host:port
+                # URL encode username and password to handle special characters like @, :, etc.
+                encoded_username = quote(proxy_username, safe='')
+                encoded_password = quote(proxy_password, safe='')
+
                 if '://' in selected_proxy:
                     # Proxy already has protocol, insert auth
                     protocol, rest = selected_proxy.split('://', 1)
-                    authenticated_proxy = f"{protocol}://{proxy_username}:{proxy_password}@{rest}"
+                    authenticated_proxy = f"{protocol}://{encoded_username}:{encoded_password}@{rest}"
                 else:
                     # No protocol, assume http
-                    authenticated_proxy = f"http://{proxy_username}:{proxy_password}@{selected_proxy}"
+                    authenticated_proxy = f"http://{encoded_username}:{encoded_password}@{selected_proxy}"
                 selected_proxy = authenticated_proxy
-                logger.info(f"Using authenticated proxy: {selected_proxy.split('@')[1] if '@' in selected_proxy else selected_proxy}")
+                # Log without showing credentials
+                proxy_host = selected_proxy.split('@')[-1] if '@' in selected_proxy else selected_proxy
+                logger.info(f"Using authenticated proxy: {proxy_host}")
             else:
                 logger.info(f"Using proxy from list: {selected_proxy}")
 
