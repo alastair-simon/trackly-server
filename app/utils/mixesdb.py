@@ -209,6 +209,69 @@ class StealthSession:
         return self._make_request('post', url, **kwargs)
 
 
+def _decompress_response(response):
+    """Handle response decompression for various compression types."""
+    content_encoding = response.headers.get('Content-Encoding', '').lower()
+    logger.debug(f"Response encoding: {response.encoding}, Content-Encoding: {content_encoding}")
+
+    if content_encoding in ['gzip', 'deflate']:
+        # requests handles these automatically
+        if response.encoding is None:
+            response.encoding = response.apparent_encoding or 'utf-8'
+        return response.text
+    elif content_encoding == 'zstd':
+        # Server sent zstd - need to decompress manually
+        logger.warning(f"Server sent zstd compression. Attempting to decompress manually.")
+        html_content = None
+
+        # Try multiple methods to decompress zstd
+        # Method 1: Try zstd library
+        try:
+            import zstd
+            html_content = zstd.decompress(response.content).decode('utf-8')
+            logger.info(f"Successfully decompressed zstd content using zstd library")
+            return html_content
+        except ImportError:
+            # Method 2: Try zstandard library
+            try:
+                import zstandard as zstd_alt
+                dctx = zstd_alt.ZstdDecompressor()
+                html_content = dctx.decompress(response.content).decode('utf-8')
+                logger.info(f"Successfully decompressed zstd content using zstandard library")
+                return html_content
+            except ImportError:
+                # Method 3: Try system zstd command (if available)
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ['zstd', '-d', '--stdout'],
+                        input=response.content,
+                        capture_output=True,
+                        check=True,
+                        timeout=10
+                    )
+                    html_content = result.stdout.decode('utf-8')
+                    logger.info(f"Successfully decompressed zstd content using system zstd command")
+                    return html_content
+                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                    logger.error("Cannot decompress zstd: no zstd library or system command available")
+                    # Last resort: try response.text (will likely fail and return binary)
+                    if response.encoding is None:
+                        response.encoding = response.apparent_encoding or 'utf-8'
+                    return response.text
+        except Exception as e:
+            logger.error(f"Failed to decompress zstd: {e}")
+            # Last resort: try response.text (will likely fail and return binary)
+            if response.encoding is None:
+                response.encoding = response.apparent_encoding or 'utf-8'
+            return response.text
+    else:
+        # No compression or unknown - use response.text
+        if response.encoding is None:
+            response.encoding = response.apparent_encoding or 'utf-8'
+        return response.text
+
+
 def search(query: str) -> List[Dict[str, str]]:
     """
     Search MixesDB for tracklists matching the query.
@@ -224,104 +287,102 @@ def search(query: str) -> List[Dict[str, str]]:
     results = []
 
     try:
-        # MixesDB uses MediaWiki category format
-        # Format: /w/Category:Artist_Name (with underscores and proper capitalization)
-        # Convert query to category format: replace spaces with underscores, capitalize words
-        category_name = query.replace(' ', '_')
-        # Capitalize first letter of each word (e.g., "leon vynehall" -> "Leon_Vynehall")
-        category_name = '_'.join(word.capitalize() for word in category_name.split('_'))
-        search_url = f"{base_url}/w/Category:{category_name}"
-        logger.info(f"Searching MixesDB category: {search_url}")
-        response = session.get(search_url)
+        # Get the main page
+        response = session.get(base_url)
+        html_content = _decompress_response(response)
+        soup = BeautifulSoup(html_content, 'html.parser')
 
-        # If category page doesn't exist (404), try MediaWiki search as fallback
-        if response.status_code == 404:
-            logger.warning(f"Category page not found, trying MediaWiki search as fallback")
+        # Look for search form
+        search_form = None
+        search_input = None
+
+        search_selectors = [
+            'input[type="search"]',
+            'input[name="search"]',
+            'input[id="search"]',
+            'input[class*="search"]',
+            'input[name="q"]',
+            'input[name="query"]'
+        ]
+
+        for selector in search_selectors:
+            elements = soup.select(selector)
+            if elements:
+                search_input = elements[0]
+                search_form = search_input.find_parent('form')
+                if search_form:
+                    logger.debug(f"Found search form using selector: {selector}")
+                    break
+
+        if not search_form or not search_input:
+            # Try direct search URL construction
+            logger.warning("Search form not found, trying MediaWiki search format")
             search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
             logger.info(f"Using MediaWiki search: {search_url}")
             response = session.get(search_url)
-
-        # TEMPORARY: Return the full HTML page content
-        # This allows us to see what's on the page without parsing
-        logger.info(f"Returning full page HTML (parsing disabled): {search_url}")
-
-        # Handle compression - requests auto-decompresses gzip/deflate
-        # We removed zstd from Accept-Encoding header, so server should send gzip/deflate
-        content_encoding = response.headers.get('Content-Encoding', '').lower()
-        logger.info(f"Response encoding: {response.encoding}, Content-Encoding: {content_encoding}")
-
-        if content_encoding in ['gzip', 'deflate']:
-            # requests handles these automatically
-            if response.encoding is None:
-                response.encoding = response.apparent_encoding or 'utf-8'
-            html_content = response.text
-        elif content_encoding == 'zstd':
-            # Server sent zstd - need to decompress manually
-            logger.warning(f"Server sent zstd compression. Attempting to decompress manually.")
-            html_content = None
-
-            # Try multiple methods to decompress zstd
-            # Method 1: Try zstd library
-            try:
-                import zstd
-                html_content = zstd.decompress(response.content).decode('utf-8')
-                logger.info(f"Successfully decompressed zstd content using zstd library")
-            except ImportError:
-                # Method 2: Try zstandard library
-                try:
-                    import zstandard as zstd_alt
-                    dctx = zstd_alt.ZstdDecompressor()
-                    html_content = dctx.decompress(response.content).decode('utf-8')
-                    logger.info(f"Successfully decompressed zstd content using zstandard library")
-                except ImportError:
-                    # Method 3: Try system zstd command (if available)
-                    import subprocess
-                    try:
-                        result = subprocess.run(
-                            ['zstd', '-d', '--stdout'],
-                            input=response.content,
-                            capture_output=True,
-                            check=True,
-                            timeout=10
-                        )
-                        html_content = result.stdout.decode('utf-8')
-                        logger.info(f"Successfully decompressed zstd content using system zstd command")
-                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                        logger.error("Cannot decompress zstd: no zstd library or system command available")
-                        # Last resort: try response.text (will likely fail and return binary)
-                        if response.encoding is None:
-                            response.encoding = response.apparent_encoding or 'utf-8'
-                        html_content = response.text
-            except Exception as e:
-                logger.error(f"Failed to decompress zstd: {e}")
-                # Last resort: try response.text (will likely fail and return binary)
-                if response.encoding is None:
-                    response.encoding = response.apparent_encoding or 'utf-8'
-                html_content = response.text
-
-            if html_content is None:
-                html_content = response.content.decode('utf-8', errors='ignore')
+            html_content = _decompress_response(response)
         else:
-            # No compression or unknown - use response.text
-            if response.encoding is None:
-                response.encoding = response.apparent_encoding or 'utf-8'
-            html_content = response.text
+            # Extract form data
+            form_action = search_form.get('action', '')
+            form_method = search_form.get('method', 'get').lower()
 
-        # Verify it's actually text (not binary)
-        if html_content and not isinstance(html_content, str):
-            try:
-                html_content = html_content.decode('utf-8')
-            except (UnicodeDecodeError, AttributeError):
-                html_content = response.content.decode('utf-8', errors='ignore')
+            form_data = {}
+            for input_elem in search_form.find_all('input'):
+                name = input_elem.get('name')
+                if name:
+                    if input_elem.get('type') in ['search', 'text'] or name in ['search', 'q', 'query']:
+                        form_data[name] = query
+                    else:
+                        form_data[name] = input_elem.get('value', '')
 
-        logger.info(f"Page HTML length: {len(html_content)} characters")
-        # Log first 200 chars to verify it's text
-        logger.info(f"HTML preview (first 200 chars): {html_content[:200] if html_content else 'empty'}")
-        results.append({
-            'title': f"Category: {category_name}",
-            'url': search_url,
-            'html': html_content
-        })
+            # If form action is empty or invalid, use MediaWiki search format
+            if not form_action or form_action == '/':
+                logger.warning(f"Form action is empty or invalid, using MediaWiki search format")
+                search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
+                logger.info(f"Using MediaWiki search: {search_url}")
+                response = session.get(search_url)
+                html_content = _decompress_response(response)
+            else:
+                search_url = urljoin(base_url, form_action) if form_action else base_url
+                logger.debug(f"Using form action: {search_url} with method: {form_method}")
+
+                if form_method == 'post':
+                    response = session.post(search_url, data=form_data)
+                else:
+                    response = session.get(search_url, params=form_data)
+                html_content = _decompress_response(response)
+
+        # Parse search results
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # Look for result links
+        result_selectors = [
+            '#catMixesList a',
+            '.linkPreviewWrapperList a',
+            '.mw-search-results a',
+            'a[href*="mix"]',
+            'a[href*="tracklist"]'
+        ]
+
+        seen_urls = set()
+        for selector in result_selectors:
+            links = soup.select(selector)
+            for link in links:
+                href = link.get('href')
+                if href and href != '#':
+                    full_url = urljoin(base_url, href)
+                    if full_url not in seen_urls:
+                        seen_urls.add(full_url)
+                        link_text = link.get_text(strip=True)
+                        results.append({
+                            'title': link_text,
+                            'url': full_url
+                        })
+
+        # Log all results for debugging/inspection
+        logger.info("MixesDB search for '%s' returned %d results:", query, len(results))
+        for idx, item in enumerate(results, start=1):
+            logger.info("  #%d: %s -> %s", idx, item.get("title", ""), item.get("url", ""))
 
         return results
 
