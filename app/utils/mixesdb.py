@@ -154,7 +154,13 @@ class StealthSession:
                 else:
                     raise
             except requests.exceptions.ProxyError as e:
-                logger.warning(f"Proxy error for {url}: {str(e)}. Attempt {attempt + 1}/{max_retries}")
+                error_str = str(e)
+                # 407 Unauthorized means authentication failed - don't retry, just fail fast
+                if '407' in error_str or 'Unauthorized' in error_str:
+                    logger.error(f"Proxy authentication failed (407 Unauthorized) for {url}. Check PROXY_USERNAME and PROXY_PASSWORD environment variables.")
+                    raise  # Don't retry authentication failures
+
+                logger.warning(f"Proxy error for {url}: {error_str}. Attempt {attempt + 1}/{max_retries}")
                 if attempt < max_retries - 1:
                     _human_like_delay(*self.retry_delay)
                     # Try rotating proxy if using proxy list
