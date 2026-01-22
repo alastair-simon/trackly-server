@@ -49,22 +49,42 @@ def get_html_from_results(results: List[Dict[str, str]]) -> List[Dict[str, Optio
         try:
             logger.info(f"Fetching HTML {idx}/{len(results)}: {title} - {url}")
             response = session.get(url)
-            # Ensure proper encoding and decompression
-            if response.encoding is None:
-                response.encoding = response.apparent_encoding or 'utf-8'
-            # Get text content (requests handles gzip decompression automatically)
-            html_content = response.text
-            # If content looks binary, try decoding manually
+
+            # Handle compression - requests auto-decompresses gzip/deflate, but not zstd/br
+            content_encoding = response.headers.get('Content-Encoding', '').lower()
+
+            if content_encoding == 'zstd':
+                # requests doesn't support zstd, need to decompress manually
+                try:
+                    import zstandard as zstd
+                    dctx = zstd.ZstdDecompressor()
+                    html_content = dctx.decompress(response.content).decode('utf-8')
+                    logger.debug(f"Manually decompressed zstd content")
+                except ImportError:
+                    logger.warning("zstandard library not installed, cannot decompress zstd")
+                    response.encoding = response.apparent_encoding or 'utf-8'
+                    html_content = response.text
+                except Exception as e:
+                    logger.error(f"Failed to decompress zstd: {e}, trying fallback")
+                    response.encoding = response.apparent_encoding or 'utf-8'
+                    html_content = response.text
+            elif content_encoding in ['gzip', 'deflate']:
+                # requests handles these automatically
+                if response.encoding is None:
+                    response.encoding = response.apparent_encoding or 'utf-8'
+                html_content = response.text
+            else:
+                # No compression or unknown - use response.text
+                if response.encoding is None:
+                    response.encoding = response.apparent_encoding or 'utf-8'
+                html_content = response.text
+
+            # Verify it's actually text (not binary)
             if html_content and not isinstance(html_content, str):
                 try:
                     html_content = html_content.decode('utf-8')
                 except (UnicodeDecodeError, AttributeError):
-                    # If still binary, try to decompress manually
-                    import gzip
-                    try:
-                        html_content = gzip.decompress(response.content).decode('utf-8')
-                    except:
-                        html_content = response.content.decode('utf-8', errors='ignore')
+                    html_content = response.content.decode('utf-8', errors='ignore')
             html_results.append(
                 {
                     "title": title,

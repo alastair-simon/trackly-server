@@ -13,3 +13,4 @@ python-Levenshtein>=0.25.0
 rapidfuzz>=3.0.0
 redis==5.0.1
 aiohttp==3.9.1
+zstandard==0.22.0
