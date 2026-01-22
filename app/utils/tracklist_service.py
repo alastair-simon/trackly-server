@@ -17,8 +17,8 @@ import os
 from datetime import timedelta
 
 from .tracklist_parser import extract_tracks_simple
-from .tracklist_html import get_html_from_results
-from .mixesdb import search
+from .tracklist_html import get_html_from_results, get_html_from_results_async
+from .mixesdb import search, search_async
 from .query_utils import extract_query_without_by
 from .result_matcher import find_best_match
 
@@ -76,14 +76,14 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
             pass
 
     try:
-        # Search for tracklists
-        results = search(query)
+        # Search for tracklists (async for better performance)
+        results = await search_async(query)
 
         # If no results found and query contains "by", try without the "by" clause
         if not results:
             fallback_query = extract_query_without_by(query)
             if fallback_query != query:
-                results = search(fallback_query)
+                results = await search_async(fallback_query)
 
         if not results:
             print("Query result not found")
@@ -97,8 +97,8 @@ async def get_tracks(query: str = "job jobse") -> Dict[str, Any]:
             print("Query result not found")
             return {"success": True, "results": []}
 
-        # Get HTML content from the best matching result only
-        html_entries = get_html_from_results([best_match])
+        # Get HTML content from the best matching result only (async for better performance)
+        html_entries = await get_html_from_results_async([best_match])
 
         if not html_entries:
             print("Query result not found")

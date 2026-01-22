@@ -3,8 +3,10 @@ MixesDB search client - searches MixesDB and returns tracklist results.
 """
 
 import requests
+import aiohttp
 from bs4 import BeautifulSoup
 import random
+import asyncio
 import time
 import os
 from urllib.parse import urljoin, quote
@@ -29,9 +31,14 @@ COMMON_USER_AGENTS = [
 
 
 def _human_like_delay(min_delay=2000, max_delay=5000):
-    """Add a random delay to mimic human behavior."""
+    """Add a random delay to mimic human behavior (synchronous)."""
     delay = random.uniform(min_delay, max_delay) / 1000
     time.sleep(delay)
+
+async def _async_human_like_delay(min_delay=2000, max_delay=5000):
+    """Add a random delay to mimic human behavior (async)."""
+    delay = random.uniform(min_delay, max_delay) / 1000
+    await asyncio.sleep(delay)
 
 
 def _get_proxy_list():
@@ -109,7 +116,6 @@ class StealthSession:
         self.retry_delay = retry_delay
         self.proxy_list = _get_proxy_list()
         self.proxies = _get_proxies(self.proxy_list)
-        if self.proxies:
         self._setup_session()
 
     def _setup_session(self):
@@ -194,8 +200,119 @@ class StealthSession:
         return self._make_request('post', url, **kwargs)
 
 
+class AsyncStealthSession:
+    """Async HTTP session with stealth features to avoid being blocked."""
+
+    def __init__(self, min_delay=500, max_delay=1500, retry_delay=(5000, 10000), skip_delay_on_cache=False):
+        self.session = None
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.retry_delay = retry_delay
+        self.proxy_list = _get_proxy_list()
+        self.proxies = _get_proxies(self.proxy_list)
+        self.skip_delay_on_cache = skip_delay_on_cache
+        self.headers = self._get_headers()
+
+    def _get_headers(self):
+        """Get stealth headers."""
+        user_agent = random.choice(COMMON_USER_AGENTS)
+        return {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://www.google.com/'
+        }
+
+    async def _get_session(self):
+        """Get or create aiohttp session."""
+        if self.session is None or self.session.closed:
+            timeout = aiohttp.ClientTimeout(total=30)
+            connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
+            self.session = aiohttp.ClientSession(
+                headers=self.headers,
+                timeout=timeout,
+                connector=connector
+            )
+        return self.session
+
+    async def _make_request(self, method, url, skip_delay=False, **kwargs):
+        """Common async request handling with retries and delays."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Only delay if not skipping (e.g., for cached requests)
+                if not skip_delay and not self.skip_delay_on_cache:
+                    await _async_human_like_delay(self.min_delay, self.max_delay)
+
+                session = await self._get_session()
+
+                # Prepare request kwargs
+                request_kwargs = kwargs.copy()
+                if self.proxies:
+                    # aiohttp uses different proxy format
+                    proxy_url = self.proxies.get('https') or self.proxies.get('http')
+                    if proxy_url:
+                        request_kwargs['proxy'] = proxy_url
+
+                async with getattr(session, method)(url, **request_kwargs) as response:
+                    if response.status == 200:
+                        return response
+                    elif response.status == 403:
+                        if attempt < max_retries - 1:
+                            await _async_human_like_delay(*self.retry_delay)
+                            self.headers = self._get_headers()  # Refresh headers
+                            if self.proxy_list:
+                                self.proxies = _get_proxies(self.proxy_list)
+                        else:
+                            response.raise_for_status()
+                    else:
+                        response.raise_for_status()
+            except aiohttp.ClientProxyConnectionError as e:
+                error_str = str(e)
+                if '407' in error_str or 'Unauthorized' in error_str:
+                    raise
+                if attempt < max_retries - 1:
+                    await _async_human_like_delay(*self.retry_delay)
+                    if self.proxy_list:
+                        self.proxies = _get_proxies(self.proxy_list)
+                    self.headers = self._get_headers()
+                else:
+                    raise
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                if attempt < max_retries - 1:
+                    await _async_human_like_delay(*self.retry_delay)
+                    if self.proxy_list:
+                        self.proxies = _get_proxies(self.proxy_list)
+                    self.headers = self._get_headers()
+                else:
+                    raise
+        return None
+
+    async def get(self, url, skip_delay=False, **kwargs):
+        """Enhanced async GET request with retries."""
+        return await self._make_request('get', url, skip_delay=skip_delay, **kwargs)
+
+    async def post(self, url, skip_delay=False, **kwargs):
+        """Enhanced async POST request with retries."""
+        return await self._make_request('post', url, skip_delay=skip_delay, data=kwargs.get('data'), **{k: v for k, v in kwargs.items() if k != 'data'})
+
+    async def close(self):
+        """Close the session."""
+        if self.session and not self.session.closed:
+            await self.session.close()
+
+
 def _decompress_response(response):
-    """Handle response decompression for various compression types."""
+    """Handle response decompression for various compression types (synchronous requests)."""
     content_encoding = response.headers.get('Content-Encoding', '').lower()
 
     if content_encoding in ['gzip', 'deflate']:
@@ -249,10 +366,57 @@ def _decompress_response(response):
             response.encoding = response.apparent_encoding or 'utf-8'
         return response.text
 
+async def _async_decompress_response(response: aiohttp.ClientResponse):
+    """Handle response decompression for various compression types (async aiohttp)."""
+    content_encoding = response.headers.get('Content-Encoding', '').lower()
+
+    if content_encoding in ['gzip', 'deflate']:
+        # aiohttp handles these automatically
+        return await response.text()
+    elif content_encoding == 'zstd':
+        # Server sent zstd - need to decompress manually
+        content = await response.read()
+        html_content = None
+
+        # Try multiple methods to decompress zstd
+        # Method 1: Try zstd library
+        try:
+            import zstd
+            html_content = zstd.decompress(content).decode('utf-8')
+            return html_content
+        except ImportError:
+            # Method 2: Try zstandard library
+            try:
+                import zstandard as zstd_alt
+                dctx = zstd_alt.ZstdDecompressor()
+                html_content = dctx.decompress(content).decode('utf-8')
+                return html_content
+            except ImportError:
+                # Method 3: Try system zstd command (if available)
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ['zstd', '-d', '--stdout'],
+                        input=content,
+                        capture_output=True,
+                        check=True,
+                        timeout=10
+                    )
+                    html_content = result.stdout.decode('utf-8')
+                    return html_content
+                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                    # Last resort: decode as text
+                    return content.decode('utf-8', errors='ignore')
+        except Exception:
+            return content.decode('utf-8', errors='ignore')
+    else:
+        # No compression or unknown
+        return await response.text()
+
 
 def search(query: str) -> List[Dict[str, str]]:
     """
-    Search MixesDB for tracklists matching the query.
+    Search MixesDB for tracklists matching the query (synchronous version for backward compatibility).
 
     Args:
         query: The search query to look for
@@ -354,4 +518,119 @@ def search(query: str) -> List[Dict[str, str]]:
         return results
 
     except Exception:
+        return []
+
+
+async def search_async(query: str) -> List[Dict[str, str]]:
+    """
+    Search MixesDB for tracklists matching the query (async version for better performance).
+
+    Args:
+        query: The search query to look for
+
+    Returns:
+        List of dictionaries with 'title' and 'url' keys, empty list if no results found
+    """
+    base_url = "https://www.mixesdb.com"
+    session = AsyncStealthSession()
+    results = []
+
+    try:
+        # Get the main page
+        response = await session.get(base_url)
+        html_content = await _async_decompress_response(response)
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # Look for search form
+        search_form = None
+        search_input = None
+
+        search_selectors = [
+            'input[type="search"]',
+            'input[name="search"]',
+            'input[id="search"]',
+            'input[class*="search"]',
+            'input[name="q"]',
+            'input[name="query"]'
+        ]
+
+        for selector in search_selectors:
+            elements = soup.select(selector)
+            if elements:
+                search_input = elements[0]
+                search_form = search_input.find_parent('form')
+                if search_form:
+                    break
+
+        if not search_form or not search_input:
+            # Try direct search URL construction
+            search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
+            response = await session.get(search_url)
+            html_content = await _async_decompress_response(response)
+        else:
+            # Extract form data
+            form_action = search_form.get('action', '')
+            form_method = search_form.get('method', 'get').lower()
+
+            form_data = {}
+            for input_elem in search_form.find_all('input'):
+                name = input_elem.get('name')
+                if name:
+                    if input_elem.get('type') in ['search', 'text'] or name in ['search', 'q', 'query']:
+                        form_data[name] = query
+                    else:
+                        form_data[name] = input_elem.get('value', '')
+
+            # If form action is empty or invalid, use MediaWiki search format
+            if not form_action or form_action == '/':
+                search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
+                response = await session.get(search_url)
+                html_content = await _async_decompress_response(response)
+            else:
+                search_url = urljoin(base_url, form_action) if form_action else base_url
+
+                if form_method == 'post':
+                    response = await session.post(search_url, data=form_data)
+                else:
+                    # For GET, add params to URL
+                    from urllib.parse import urlencode
+                    if form_data:
+                        separator = '&' if '?' in search_url else '?'
+                        search_url = f"{search_url}{separator}{urlencode(form_data)}"
+                    response = await session.get(search_url)
+                html_content = await _async_decompress_response(response)
+
+        # Parse search results
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # Look for result links
+        result_selectors = [
+            '#catMixesList a',
+            '.linkPreviewWrapperList a',
+            '.mw-search-results a',
+            'a[href*="mix"]',
+            'a[href*="tracklist"]'
+        ]
+
+        seen_urls = set()
+        for selector in result_selectors:
+            links = soup.select(selector)
+            for link in links:
+                href = link.get('href')
+                if href and href != '#':
+                    full_url = urljoin(base_url, href)
+                    if full_url not in seen_urls:
+                        seen_urls.add(full_url)
+                        link_text = link.get_text(strip=True)
+                        results.append({
+                            'title': link_text,
+                            'url': full_url
+                        })
+
+        await session.close()
+        return results
+
+    except Exception:
+        if session:
+            await session.close()
         return []
