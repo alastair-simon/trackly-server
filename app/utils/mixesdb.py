@@ -234,29 +234,45 @@ def search(query: str) -> List[Dict[str, str]]:
         # Parse search results
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Look for result links
+        # Debug: Log page structure to help diagnose parsing issues
+        logger.debug(f"Page title: {soup.title.string if soup.title else 'No title'}")
+        category_sections = soup.select('#mw-pages, #mw-subcategories, .mw-category-group')
+        logger.debug(f"Found {len(category_sections)} MediaWiki category sections")
+
+        # Look for result links - MediaWiki category pages have specific structure
         result_selectors = [
-            '#catMixesList a',
-            '.linkPreviewWrapperList a',
-            '.mw-search-results a',
-            'a[href*="mix"]',
-            'a[href*="tracklist"]'
+            '#mw-pages a',  # MediaWiki category page links
+            '#mw-subcategories a',  # MediaWiki subcategory links
+            '.mw-category-group a',  # MediaWiki category group links
+            '.mw-category a',  # MediaWiki category links
+            '#catMixesList a',  # MixesDB specific
+            '.linkPreviewWrapperList a',  # MixesDB specific
+            '.mw-search-results a',  # MediaWiki search results
+            'a[href*="/w/"]',  # Any MediaWiki page link
+            'a[href*="mix"]',  # Links containing "mix"
+            'a[href*="tracklist"]'  # Links containing "tracklist"
         ]
 
         seen_urls = set()
         for selector in result_selectors:
             links = soup.select(selector)
+            if links:
+                logger.debug(f"Found {len(links)} links using selector: {selector}")
             for link in links:
                 href = link.get('href')
-                if href and href != '#':
+                if href and href != '#' and not href.startswith('#'):
+                    # Skip category links and other non-tracklist links
+                    if '/Category:' in href or '/Special:' in href or '/File:' in href:
+                        continue
                     full_url = urljoin(base_url, href)
                     if full_url not in seen_urls:
                         seen_urls.add(full_url)
                         link_text = link.get_text(strip=True)
-                        results.append({
-                            'title': link_text,
-                            'url': full_url
-                        })
+                        if link_text:  # Only add if link has text
+                            results.append({
+                                'title': link_text,
+                                'url': full_url
+                            })
         # Log all results for debugging/inspection
         logger.info("MixesDB search for '%s' returned %d results:", query, len(results))
         for idx, item in enumerate(results, start=1):
