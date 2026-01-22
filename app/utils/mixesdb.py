@@ -214,52 +214,22 @@ def search(query: str) -> List[Dict[str, str]]:
     results = []
 
     try:
-        # Get the main page
-        response = session.get(base_url)
-        soup = BeautifulSoup(response.content, 'html.parser')
+        # MixesDB uses MediaWiki category format
+        # Format: /w/Category:Artist_Name (with underscores and proper capitalization)
+        # Convert query to category format: replace spaces with underscores, capitalize words
+        category_name = query.replace(' ', '_')
+        # Capitalize first letter of each word (e.g., "leon vynehall" -> "Leon_Vynehall")
+        category_name = '_'.join(word.capitalize() for word in category_name.split('_'))
+        search_url = f"{base_url}/w/Category:{category_name}"
+        logger.info(f"Searching MixesDB category: {search_url}")
+        response = session.get(search_url)
 
-        # Look for search form
-        search_form = None
-        search_input = None
-
-        search_selectors = [
-            'input[type="search"]',
-            'input[name="search"]',
-            'input[id="search"]',
-            'input[class*="search"]'
-        ]
-
-        for selector in search_selectors:
-            elements = soup.select(selector)
-            if elements:
-                search_input = elements[0]
-                search_form = search_input.find_parent('form')
-                break
-
-        if not search_form or not search_input:
-            # Try direct search URL construction
-            search_url = f"{base_url}/search?q={query}"
+        # If category page doesn't exist (404), try MediaWiki search as fallback
+        if response.status_code == 404:
+            logger.warning(f"Category page not found, trying MediaWiki search as fallback")
+            search_url = f"{base_url}/w/index.php?title=Special:Search&search={quote(query)}"
+            logger.info(f"Using MediaWiki search: {search_url}")
             response = session.get(search_url)
-        else:
-            # Extract form data
-            form_action = search_form.get('action', '')
-            form_method = search_form.get('method', 'get').lower()
-
-            form_data = {}
-            for input_elem in search_form.find_all('input'):
-                name = input_elem.get('name')
-                if name:
-                    if input_elem.get('type') in ['search', 'text'] or name in ['search', 'q', 'query']:
-                        form_data[name] = query
-                    else:
-                        form_data[name] = input_elem.get('value', '')
-
-            search_url = urljoin(base_url, form_action) if form_action else base_url
-
-            if form_method == 'post':
-                response = session.post(search_url, data=form_data)
-            else:
-                response = session.get(search_url, params=form_data)
 
         # Parse search results
         soup = BeautifulSoup(response.content, 'html.parser')

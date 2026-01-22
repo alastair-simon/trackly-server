@@ -23,6 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+test_proxy.py
 
 # Virtual Environment
 venv/
