@@ -61,11 +61,19 @@ def _get_proxies(proxy_list=None):
             proxy_password = os.getenv('PROXY_PASSWORD') or os.getenv('proxy_password')
             proxy_country = os.getenv('PROXY_COUNTRY', 'US')  # Default to US if not specified
 
+            # Extract customer ID if email format was provided (remove @domain part)
+            # Oxylabs customer ID should not include @ symbol
+            if proxy_username and '@' in proxy_username:
+                proxy_username = proxy_username.split('@')[0]
+                logger.warning(f"Extracted customer ID '{proxy_username}' from email address. Use just the customer ID in PROXY_USERNAME.")
+
             if proxy_username and proxy_password:
                 # Oxylabs requires specific format: user-USERNAME-country-COUNTRY:PASSWORD@host:port
                 # Format: https://user-USERNAME-country-COUNTRY:PASSWORD@dc.oxylabs.io:PORT
-                # Note: Password should NOT be URL-encoded per Oxylabs documentation
                 formatted_username = f"user-{proxy_username}-country-{proxy_country}"
+                # URL encode password to handle special characters like ?, @, :, etc.
+                # These characters break URL parsing if not encoded
+                encoded_password = quote(proxy_password, safe='')
 
                 # Extract host:port from proxy (remove any existing protocol)
                 if '://' in selected_proxy:
@@ -74,7 +82,7 @@ def _get_proxies(proxy_list=None):
                     proxy_host_port = selected_proxy
 
                 # Use https:// protocol as shown in Oxylabs example
-                authenticated_proxy = f"https://{formatted_username}:{proxy_password}@{proxy_host_port}"
+                authenticated_proxy = f"https://{formatted_username}:{encoded_password}@{proxy_host_port}"
                 selected_proxy = authenticated_proxy
                 # Log without showing credentials
                 logger.info(f"Using authenticated Oxylabs proxy: {proxy_host_port}")
