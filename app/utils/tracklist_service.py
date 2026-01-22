@@ -44,9 +44,9 @@ try:
             socket_timeout=5,  # 5 second timeout for operations
             socket_connect_timeout=5  # 5 second timeout for connections
         )
-    # Test connection
-    redis_client.ping()
-    logger.info("Successfully connected to Redis cache")
+        # Test connection
+        redis_client.ping()
+        logger.info("Successfully connected to Redis cache")
 except (redis.ConnectionError, redis.TimeoutError) as e:
     logger.warning(f"Could not connect to Redis cache: {str(e)}. Caching will be disabled.")
     redis_client = None
