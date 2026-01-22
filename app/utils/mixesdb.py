@@ -265,7 +265,17 @@ class AsyncStealthSession:
 
                 async with getattr(session, method)(url, **request_kwargs) as response:
                     if response.status == 200:
-                        return response
+                        # Read content and headers before context exits
+                        content = await response.read()
+                        headers = dict(response.headers)
+                        status = response.status
+                        # Create a simple object to hold the response data
+                        class ResponseWrapper:
+                            def __init__(self, content, headers, status):
+                                self.content = content
+                                self.headers = headers
+                                self.status = status
+                        return ResponseWrapper(content, headers, status)
                     elif response.status == 403:
                         if attempt < max_retries - 1:
                             await _async_human_like_delay(*self.retry_delay)
@@ -366,16 +376,31 @@ def _decompress_response(response):
             response.encoding = response.apparent_encoding or 'utf-8'
         return response.text
 
-async def _async_decompress_response(response: aiohttp.ClientResponse):
+async def _async_decompress_response(response_wrapper):
     """Handle response decompression for various compression types (async aiohttp)."""
-    content_encoding = response.headers.get('Content-Encoding', '').lower()
+    content_encoding = response_wrapper.headers.get('Content-Encoding', '').lower()
+    content = response_wrapper.content
 
     if content_encoding in ['gzip', 'deflate']:
-        # aiohttp handles these automatically
-        return await response.text()
+        # aiohttp should have already decompressed, but handle manually if needed
+        try:
+            import gzip
+            if content_encoding == 'gzip':
+                try:
+                    content = gzip.decompress(content)
+                except Exception:
+                    pass  # May already be decompressed
+            elif content_encoding == 'deflate':
+                import zlib
+                try:
+                    content = zlib.decompress(content)
+                except Exception:
+                    pass  # May already be decompressed
+        except Exception:
+            pass  # If decompression fails, try to decode as-is
+        return content.decode('utf-8', errors='ignore')
     elif content_encoding == 'zstd':
         # Server sent zstd - need to decompress manually
-        content = await response.read()
         html_content = None
 
         # Try multiple methods to decompress zstd
@@ -411,7 +436,7 @@ async def _async_decompress_response(response: aiohttp.ClientResponse):
             return content.decode('utf-8', errors='ignore')
     else:
         # No compression or unknown
-        return await response.text()
+        return content.decode('utf-8', errors='ignore')
 
 
 def search(query: str) -> List[Dict[str, str]]:
